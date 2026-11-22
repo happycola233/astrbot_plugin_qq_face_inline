@@ -1,7 +1,7 @@
 name: astrbot_plugin_qq_face_inline
 display_name: QQ 小黄脸行内转换
-desc: 把模型回复里的「/表情名」（如「在呢/汪汪」）转换成 QQ 小黄脸，规则与 MaiBot SnowLuma 适配器一致。
-version: v1.0.0
+desc: 把模型回复里的「/表情名」和「[@QQ号]」转换成 QQ 小黄脸和 @，小黄脸规则与 MaiBot SnowLuma 适配器一致。
+version: v1.1.0
 author: happycola233
 repo: https://github.com/happycola233/astrbot_plugin_qq_face_inline
 support_platforms:
