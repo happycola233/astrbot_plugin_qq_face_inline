@@ -1,8 +1,8 @@
-name: astrbot_plugin_qq_face_inline
-display_name: QQ 小黄脸行内转换
-desc: 把模型回复里的「/表情名」和「[@QQ号]」转换成 QQ 小黄脸和 @，小黄脸规则与 MaiBot SnowLuma 适配器一致。
-version: v1.1.0
+name: astrbot_plugin_qq_message_plus
+display_name: QQ 消息增强
+desc: 标记语音转写、展开合并转发；把模型回复里的「/表情名」「[@QQ号]」「[分段]」转成 QQ 小黄脸、@ 和多条消息。
+version: v2.0.0
 author: happycola233
-repo: https://github.com/happycola233/astrbot_plugin_qq_face_inline
+repo: https://github.com/happycola233/astrbot_plugin_qq_message_plus
 support_platforms:
   - aiocqhttp
