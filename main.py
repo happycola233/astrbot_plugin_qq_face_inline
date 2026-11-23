@@ -3,13 +3,14 @@
 Incoming messages: speech-to-text results get a "[语音]" tag and merged
 forwards are expanded into text, so the model knows what it is reading.
 Model replies: inline "/表情名", "[@QQ号]" and "[分段]" markers become QQ
-faces, @ mentions and separately sent messages.
+faces, @ mentions and separately sent messages. Every feature can be
+turned off in the plugin config.
 """
 
 import asyncio
 import re
 
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import (
     At,
@@ -27,15 +28,17 @@ VOICE_TAG = "[语音] "
 
 # The model writes "[分段]" where a new message should start.
 SPLIT_PATTERN = re.compile(r"\s*\[分段\]\s*")
-# Replies longer than this are sent whole. Long explanations should not be
-# split, and AngelHeart turns 800+ character replies into an image, where a
-# leftover marker would be visible.
-MAX_SPLIT_REPLY_CHARS = 300
+# AngelHeart's quote marker "[#n]" at the very start of a reply. It has to stay
+# at the front of the body so AngelHeart still finds it and adds the quote.
+QUOTE_PREFIX_PATTERN = re.compile(r"^\s*[\[【]\s*#\s*\d+\s*[\]】]\s*")
+# Event extra carrying the short opening and closing lines of a long reply
+# from prepare_splits to convert_markers, past AngelHeart's long-reply image.
+EDGE_LINES_KEY = "qq_message_plus_edge_lines"
 
 # Nested forwards are expanded this many levels deep; the whole expansion is
-# cut at FORWARD_MAX_CHARS so a huge chat log cannot flood the context.
+# cut at the "forward_max_chars" config so a huge chat log cannot flood the
+# context.
 FORWARD_MAX_DEPTH = 2
-FORWARD_MAX_CHARS = 3000
 FORWARD_TIMEOUT_SECONDS = 10
 FORWARD_SEGMENT_TEXT = {
     "image": "[图片]",
@@ -70,20 +73,20 @@ MARKER_PATTERN = re.compile(
     "astrbot_plugin_qq_message_plus",
     "happycola233",
     "QQ 消息增强：标记语音转写、展开合并转发，把模型回复里的小黄脸、@ 和分段标记转成真正的 QQ 消息",
-    "2.0.0",
+    "2.1.0",
 )
 class QQMessagePlus(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.config = config
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def enrich_incoming(self, event: AstrMessageEvent):
         """Tag voice transcripts and expand merged forwards before other plugins.
 
         Runs after AstrBot's speech-to-text and before AngelHeart (priority
-        -10), so the chat record and the model both see the result.
-        self-learning collects messages at a higher priority and therefore
-        keeps learning from the untouched message.
+        -10), so the chat record and the model both see the result. Plugins
+        with a lower priority also see the tagged and expanded text.
 
         Args:
             event: The incoming message event.
@@ -97,8 +100,13 @@ class QQMessagePlus(Star):
 
         # QQ voice messages carry nothing else, so after a successful
         # speech-to-text the only text in the chain is the transcript.
-        had_voice = isinstance(segments, list) and any(
-            isinstance(seg, dict) and seg.get("type") == "record" for seg in segments
+        had_voice = (
+            self.config.get("mark_voice", True)
+            and isinstance(segments, list)
+            and any(
+                isinstance(seg, dict) and seg.get("type") == "record"
+                for seg in segments
+            )
         )
         if had_voice and not any(isinstance(comp, Record) for comp in chain):
             for index, comp in enumerate(chain):
@@ -112,7 +120,11 @@ class QQMessagePlus(Star):
                     break
 
         for index, comp in enumerate(chain):
-            if not isinstance(comp, Forward) or not comp.id:
+            if (
+                not self.config.get("expand_forward", True)
+                or not isinstance(comp, Forward)
+                or not comp.id
+            ):
                 continue
             lines = await self._expand_forward(event.bot, str(comp.id), 1, [0])
             text = "[合并转发]\n" + "\n".join(lines) + "\n[合并转发结束]"
@@ -148,9 +160,10 @@ class QQMessagePlus(Star):
             logger.warning(f"Failed to fetch merged forward {forward_id}: {e}")
             return ["（内容获取失败）"]
 
+        max_chars = int(self.config.get("forward_max_chars", 3000))
         lines = []
         for node in (data or {}).get("messages") or []:
-            if used_chars[0] >= FORWARD_MAX_CHARS:
+            if used_chars[0] >= max_chars:
                 lines.append("……（后面还有，太长已省略）")
                 break
             sender = node.get("sender") or {}
@@ -191,11 +204,16 @@ class QQMessagePlus(Star):
         return lines or ["（空）"]
 
     @filter.on_decorating_result(priority=300)
-    async def drop_unusable_splits(self, event: AstrMessageEvent):
-        """Turn "[分段]" into line breaks when the reply must stay whole.
+    async def prepare_splits(self, event: AstrMessageEvent):
+        """Decide which "[分段]" markers survive, before AngelHeart runs.
 
-        Runs before AngelHeart (priority 200) builds its long-reply image, so
-        a marker never ends up inside the image or on another platform.
+        Runs before AngelHeart (priority 200), which may turn a long reply
+        into an image, so a marker never ends up inside the image. Markers
+        become line breaks when splitting is off, outside aiocqhttp, and in a
+        reply longer than "split_max_chars". Such a long reply still keeps a
+        short opening or closing line (at most "edge_max_chars") as its own
+        message: the lines are taken out here, so AngelHeart only sees the
+        body, and convert_markers puts them back around it.
 
         Args:
             event: The event whose reply is about to be sent.
@@ -206,12 +224,37 @@ class QQMessagePlus(Star):
         plains = [comp for comp in result.chain if isinstance(comp, Plain)]
         if not any(SPLIT_PATTERN.search(comp.text) for comp in plains):
             return
-        reply_chars = sum(len(SPLIT_PATTERN.sub("", comp.text)) for comp in plains)
-        if (
-            event.get_platform_name() == "aiocqhttp"
-            and reply_chars <= MAX_SPLIT_REPLY_CHARS
+        if event.get_platform_name() == "aiocqhttp" and self.config.get(
+            "split_reply", True
         ):
-            return
+            max_chars = int(self.config.get("split_max_chars", 300))
+            reply_chars = sum(len(SPLIT_PATTERN.sub("", comp.text)) for comp in plains)
+            if max_chars <= 0 or reply_chars <= max_chars:
+                return
+            edge_chars = int(self.config.get("edge_max_chars", 40))
+            if edge_chars > 0 and len(plains) == len(result.chain):
+                text = "".join(comp.text for comp in plains)
+                quote = QUOTE_PREFIX_PATTERN.match(text)
+                prefix = quote.group(0) if quote else ""
+                parts = [
+                    part
+                    for part in SPLIT_PATTERN.split(text[len(prefix) :])
+                    if part.strip()
+                ]
+                lead = (
+                    parts.pop(0)
+                    if len(parts) > 1 and len(parts[0]) <= edge_chars
+                    else ""
+                )
+                tail = (
+                    parts.pop()
+                    if len(parts) > 1 and len(parts[-1]) <= edge_chars
+                    else ""
+                )
+                if lead or tail:
+                    event.set_extra(EDGE_LINES_KEY, (lead, tail))
+                    result.chain = [Plain(prefix + "\n".join(parts))]
+                    return
         for comp in plains:
             comp.text = SPLIT_PATTERN.sub("\n", comp.text).strip("\n")
 
@@ -229,15 +272,36 @@ class QQMessagePlus(Star):
         Args:
             event: The event whose reply is about to be sent.
         """
+        edge_lines = event.get_extra(EDGE_LINES_KEY)
+        if edge_lines:
+            event.set_extra(EDGE_LINES_KEY, None)
         if event.get_platform_name() != "aiocqhttp":
             return
         result = event.get_result()
         if result is None or not result.is_llm_result():
             return
         in_group = bool(event.get_group_id())
+        convert_faces = self.config.get("convert_faces", True)
+        convert_at = self.config.get("convert_at", True)
+
+        # Put back the opening and closing lines prepare_splits took out,
+        # around whatever the body has become (text or AngelHeart's image).
+        # AngelHeart's quote stays in front, so it goes with the first message.
+        chain = result.chain
+        if edge_lines and any(not isinstance(comp, (Reply, At)) for comp in chain):
+            lead, tail = edge_lines
+            head = 0
+            while head < len(chain) and isinstance(chain[head], Reply):
+                head += 1
+            chain = [
+                *chain[:head],
+                *([Plain(lead + "[分段]")] if lead else []),
+                *chain[head:],
+                *([Plain("[分段]" + tail)] if tail else []),
+            ]
 
         segments = [[]]
-        for comp in result.chain:
+        for comp in chain:
             if not isinstance(comp, Plain) or not MARKER_PATTERN.search(comp.text):
                 segments[-1].append(comp)
                 continue
@@ -248,8 +312,12 @@ class QQMessagePlus(Star):
                 if match.group("split") is not None:
                     segments.append([])
                 elif match.group("face"):
-                    segments[-1].append(Face(id=QQ_FACE_IDS[match.group("face")]))
-                elif in_group:
+                    segments[-1].append(
+                        Face(id=QQ_FACE_IDS[match.group("face")])
+                        if convert_faces
+                        else Plain(match.group(0))
+                    )
+                elif in_group and convert_at:
                     segments[-1].append(At(qq=match.group("qq")))
                 cursor = match.end()
             if cursor < len(comp.text):
@@ -275,10 +343,11 @@ class QQMessagePlus(Star):
             return
         parts[-1].extend(carried)
 
+        max_pause = float(self.config.get("split_pause_max_seconds", 3.0))
         for index, part in enumerate(parts):
-            if index:
+            if index and max_pause > 0:
                 chars = sum(len(comp.text) for comp in part if isinstance(comp, Plain))
-                await asyncio.sleep(min(3.0, 0.6 + 0.08 * chars))
+                await asyncio.sleep(min(max_pause, 0.6 + 0.08 * chars))
             if index == len(parts) - 1:
                 result.chain = part
                 break

@@ -1,7 +1,7 @@
 name: astrbot_plugin_qq_message_plus
 display_name: QQ 消息增强
 desc: 标记语音转写、展开合并转发；把模型回复里的「/表情名」「[@QQ号]」「[分段]」转成 QQ 小黄脸、@ 和多条消息。
-version: v2.0.0
+version: v2.1.0
 author: happycola233
 repo: https://github.com/happycola233/astrbot_plugin_qq_message_plus
 support_platforms:

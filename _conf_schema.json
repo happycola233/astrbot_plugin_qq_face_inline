@@ -1,0 +1,56 @@
+{
+  "mark_voice": {
+    "type": "bool",
+    "description": "语音加 [语音] 标记",
+    "default": true,
+    "hint": "语音转写成文字后，在前面加上「[语音] 」，让模型知道这是语音、可能有同音错字。"
+  },
+  "expand_forward": {
+    "type": "bool",
+    "description": "展开合并转发",
+    "default": true,
+    "hint": "通过协议端取回合并转发的内容，展开成「昵称: 内容」的文字给模型看。关掉后模型只知道有人发了合并转发，看不到内容。"
+  },
+  "forward_max_chars": {
+    "type": "int",
+    "description": "合并转发最多展开多少字",
+    "default": 3000,
+    "hint": "超过就截断，免得一大段聊天记录塞满上下文。套娃的转发最多展开两层。"
+  },
+  "convert_faces": {
+    "type": "bool",
+    "description": "转换小黄脸",
+    "default": true,
+    "hint": "把模型回复里的「/表情名」换成 QQ 小黄脸。关掉后原样当文字发。"
+  },
+  "convert_at": {
+    "type": "bool",
+    "description": "转换 @",
+    "default": true,
+    "hint": "群聊里把模型回复里的「[@QQ号]」换成真正的 @。关掉后标记直接去掉，不会 @ 人。私聊里一律去掉。"
+  },
+  "split_reply": {
+    "type": "bool",
+    "description": "按 [分段] 分条发",
+    "default": true,
+    "hint": "模型在回复里写「[分段]」的地方拆开，分成几条依次发出。关掉后「[分段]」换成换行，整条发。"
+  },
+  "split_max_chars": {
+    "type": "int",
+    "description": "超过多少字的回复，正文整块发",
+    "default": 300,
+    "hint": "整条回复超过这个字数时，正文中间的「[分段]」换成换行，不拆开。填 0 不限制。"
+  },
+  "edge_max_chars": {
+    "type": "int",
+    "description": "长回复的开场、收尾最多几个字",
+    "default": 40,
+    "hint": "超过上面字数的回复，开头或结尾那句如果不超过这个字数（比如「好哇，写好了~」），还是单独发一条，正文整块发。填 0 就不单独发。"
+  },
+  "split_pause_max_seconds": {
+    "type": "float",
+    "description": "分条之间最多停顿几秒",
+    "default": 3.0,
+    "hint": "后面每条发出前，按这条的长度停顿一下（0.6 秒起，每个字加 0.08 秒），像在打字，最多停这么久。填 0 不停顿。"
+  }
+}
